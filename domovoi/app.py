@@ -38,7 +38,7 @@ class Domovoi(Chalice):
     sns_subscribers = {}
     sqs_subscribers = {}
     s3_subscribers = {}
-    sfn_tasks = {}
+    sfns = {}
     cwl_sub_filters = {}
     dynamodb_event_sources = {}
 
@@ -105,13 +105,34 @@ class Domovoi(Chalice):
             return func
         return register_rule
 
-    def step_function_task(self, state_name, state_machine_definition):
+    def step_function(self, state_machine_name=None):
+        def register_sfn(func):
+            handler_name = state_machine_name
+            if handler_name is None:
+                handler_name = func.__name__
+
+            self.sfns[handler_name] = dict(state_machine_definition=func,
+                                           state_machine_name=handler_name,
+                                           states=dict())
+            return func
+        return register_sfn
+
+    def step_function_task(self, state_name, state_machine_definition=None, state_machine_name=None):
         def register_sfn_task(func):
-            if state_name in self.sfn_tasks:
-                raise KeyError(state_name)
-            self.sfn_tasks[state_name] = dict(state_name=state_name,
-                                              state_machine_definition=state_machine_definition,
-                                              func=func)
+            if state_machine_name is None and state_machine_definition is None:
+                raise Exception("Neither state_machine_name nor state_machine_definition provided")
+
+            if state_machine_name is None:
+                name = "default"
+            else:
+                name = state_machine_name
+
+            if self.sfns.get(name) is None and state_machine_definition is None:
+                raise Exception("Neither a valid state_machine_name nor state_machine_definition provided")
+
+            self.sfns.setdefault(name, dict(state_machine_definition=state_machine_definition,
+                                            state_machine_name=name,
+                                            states=dict()))["states"][state_name] = func
             return func
         return register_sfn_task
 
@@ -122,7 +143,7 @@ class Domovoi(Chalice):
 
     @classmethod
     def get_all_states(cls, state_machine):
-        states = dict(state_machine["States"])
+        states = state_machine["States"]
         for state_name, state_data in state_machine["States"].items():
             for sub_sm in state_data.get("Branches", []):
                 states.update(cls.get_all_states(sub_sm))

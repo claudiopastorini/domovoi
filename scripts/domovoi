@@ -311,59 +311,57 @@ if not args.dry_run:
     for page in awslambda.get_paginator('list_aliases').paginate(FunctionName=function_name):
         existing_aliases.extend(page["Aliases"])
 
-state_machine = None
-for sfn_task_name, sfn_task in domovoi_app.sfn_tasks.items():
-    print("Registering step function state machine for", sfn_task_name)
-    if state_machine is None:
-        state_machine = sfn_task["state_machine_definition"]
-    else:
-        msg = "Multiple state machine definitions are not supported"
-        assert state_machine == sfn_task["state_machine_definition"], msg
-    lambda_alias = "domovoi-stepfunctions-task-" + sfn_task_name
-    alias_args = dict(FunctionName=function_name,
-                      Name=lambda_alias,
-                      FunctionVersion="$LATEST",
-                      Description="Domovoi Lambda routing label for a Step Functions state machine task")
-    all_states = domovoi.Domovoi.get_all_states(state_machine)
-    state = all_states[sfn_task["state_name"]]
-    if not args.dry_run:
-        for alias in existing_aliases:
-            if alias["Name"] == lambda_alias and alias["FunctionVersion"] == "$LATEST":
-                break
-        else:
-            try:
-                awslambda.create_alias(**alias_args)
-            except awslambda.exceptions.ResourceConflictException:
-                awslambda.update_alias(**alias_args)
-        state["Resource"] = lambda_arn + ":" + lambda_alias
+for sfn_name, sfn_data in domovoi_app.sfns.items():
+    state_machine = sfn_data["state_machine_definition"]()
+    for sfn_task_name, sfn_task in sfn_data["states"].items():
+        print("Registering step function state machine for", sfn_task_name)
+        lambda_alias = "domovoi-stepfunctions-task-" + sfn_task_name
+        alias_args = dict(FunctionName=function_name,
+                          Name=lambda_alias,
+                          FunctionVersion="$LATEST",
+                          Description="Domovoi Lambda routing label for a Step Functions state machine task")
+        all_states = domovoi.Domovoi.get_all_states(state_machine)
+        state = all_states[sfn_name]
+        if state is not None:
+            if not args.dry_run:
+                for alias in existing_aliases:
+                    if alias["Name"] == lambda_alias and alias["FunctionVersion"] == "$LATEST":
+                        break
+                else:
+                    try:
+                        awslambda.create_alias(**alias_args)
+                    except awslambda.exceptions.ResourceConflictException:
+                        awslambda.update_alias(**alias_args)
+                state["Resource"] = lambda_arn + ":" + lambda_alias
 
-if state_machine and not args.dry_run:
-    iam_role_arn = config.iam_role_arn or iam.Role(function_name).arn
-    sm_args = dict(name=function_name,
-                   definition=json.dumps(state_machine),
-                   roleArn=iam_role_arn)
-    try:
-        sm = sfn.create_state_machine(**sm_args)
-        print("Created new state machine", sm["stateMachineArn"])
-    except botocore.exceptions.ClientError as e:
-        for page in sfn.get_paginator("list_state_machines").paginate():
-            for sm in page["stateMachines"]:
-                if sm["name"] == function_name:
-                    break
-        if sm["name"] != function_name:
-            raise e
-        sm = sfn.describe_state_machine(stateMachineArn=sm["stateMachineArn"])
-        sm_args.clear()
-        if json.loads(sm["definition"]) != state_machine:
-            sm_args["definition"] = json.dumps(state_machine)
-        if sm["roleArn"] != iam_role_arn:
-            sm_args["roleArn"] = iam_role_arn
-        if sm_args:
-            print("Updating state machine", sm["stateMachineArn"])
-            sfn.update_state_machine(stateMachineArn=sm["stateMachineArn"], **sm_args)
-        else:
-            print("No changes required to existing state machine", sm["stateMachineArn"])
-    print("State machine:", sm["stateMachineArn"])
+    if state_machine and not args.dry_run:
+        iam_role_arn = config.iam_role_arn or iam.Role(function_name).arn
+        name = "{}-{}".format(function_name, sfn_name) if sfn_name != "default" else function_name
+        sm_args = dict(name=name,
+                       definition=json.dumps(state_machine),
+                       roleArn=iam_role_arn)
+        try:
+            sm = sfn.create_state_machine(**sm_args)
+            print("Created new state machine", sm["stateMachineArn"])
+        except botocore.exceptions.ClientError as e:
+            for page in sfn.get_paginator("list_state_machines").paginate():
+                for sm in page["stateMachines"]:
+                    if sm["name"] == function_name:
+                        break
+            if sm["name"] != function_name:
+                raise e
+            sm = sfn.describe_state_machine(stateMachineArn=sm["stateMachineArn"])
+            sm_args.clear()
+            if json.loads(sm["definition"]) != state_machine:
+                sm_args["definition"] = json.dumps(state_machine)
+            if sm["roleArn"] != iam_role_arn:
+                sm_args["roleArn"] = iam_role_arn
+            if sm_args:
+                print("Updating state machine", sm["stateMachineArn"])
+                sfn.update_state_machine(stateMachineArn=sm["stateMachineArn"], **sm_args)
+            else:
+                print("No changes required to existing state machine", sm["stateMachineArn"])
+        print("State machine:", sm["stateMachineArn"])
 
 if args.dry_run:
     print("Dry run successful")
