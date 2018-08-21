@@ -111,7 +111,7 @@ class Domovoi(Chalice):
             if handler_name is None:
                 handler_name = func.__name__
 
-            self.sfns[handler_name] = dict(state_machine_definition=func,
+            self.sfns[handler_name] = dict(state_machine_definition=func(),
                                            state_machine_name=handler_name,
                                            states=dict())
             return func
@@ -143,7 +143,7 @@ class Domovoi(Chalice):
 
     @classmethod
     def get_all_states(cls, state_machine):
-        states = state_machine["States"]
+        states = dict(state_machine["States"])
         for state_name, state_data in state_machine["States"].items():
             for sub_sm in state_data.get("Branches", []):
                 states.update(cls.get_all_states(sub_sm))
@@ -202,12 +202,13 @@ class Domovoi(Chalice):
         elif "awslogs" in event:
             event = json.loads(gzip.decompress(base64.b64decode(event["awslogs"]["data"])))
             handler = self.cwl_sub_filters[event["logGroup"]]["func"]
-        elif "domovoi-stepfunctions-task" in invoked_function_arn.resource:
+        elif "domovoi-stepfunctions-" in invoked_function_arn.resource:
             _, lambda_name, lambda_alias = invoked_function_arn.resource.split(":")
-            assert lambda_alias.startswith("domovoi-stepfunctions-task-")
-            task_name = lambda_alias[len("domovoi-stepfunctions-task-"):]
+            assert lambda_alias.startswith("domovoi-stepfunctions-")
+            sfn_name = lambda_alias[len("domovoi-stepfunctions-"):].split("-")[0]
+            task_name = lambda_alias[len("domovoi-stepfunctions-"):].split("-")[2]
             context.stepfunctions_task_name = task_name
-            handler = self.sfn_tasks[task_name]["func"]
+            handler = self.sfns[sfn_name]["states"][task_name]
 
         if handler is None:
             raise DomovoiException("No handler found for event {}".format(event))

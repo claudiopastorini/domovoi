@@ -312,16 +312,16 @@ if not args.dry_run:
         existing_aliases.extend(page["Aliases"])
 
 for sfn_name, sfn_data in domovoi_app.sfns.items():
-    state_machine = sfn_data["state_machine_definition"]()
+    state_machine = sfn_data["state_machine_definition"]
     for sfn_task_name, sfn_task in sfn_data["states"].items():
         print("Registering step function state machine for", sfn_task_name)
-        lambda_alias = "domovoi-stepfunctions-task-" + sfn_task_name
+        lambda_alias = "domovoi-stepfunctions-" + sfn_name + "-task-" + sfn_task_name
         alias_args = dict(FunctionName=function_name,
                           Name=lambda_alias,
                           FunctionVersion="$LATEST",
                           Description="Domovoi Lambda routing label for a Step Functions state machine task")
         all_states = domovoi.Domovoi.get_all_states(state_machine)
-        state = all_states[sfn_name]
+        state = all_states[sfn_task_name]
         if state is not None:
             if not args.dry_run:
                 for alias in existing_aliases:
